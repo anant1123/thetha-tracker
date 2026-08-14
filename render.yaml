@@ -1,0 +1,28 @@
+services:
+  - type: worker
+    name: option-greeks-tracker
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python greeks_tracker.py
+    envVars:
+      - key: ANGEL_API_KEY
+        sync: false
+      - key: ANGEL_CLIENT_CODE
+        sync: false
+      - key: ANGEL_PIN
+        sync: false
+      - key: ANGEL_TOTP_SECRET
+        sync: false
+      - key: MONGO_URI
+        sync: false
+      - key: MONGO_DB
+        value: theta_tracker
+      - key: MONGO_COLLECTION
+        value: option_greeks
+      - key: SYMBOLS
+        value: NIFTY,BANKNIFTY
+      - key: STRIKE_RANGE
+        value: "2"
+      - key: POLL_SECONDS
+        value: "30"

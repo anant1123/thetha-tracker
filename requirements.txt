@@ -1,0 +1,8 @@
+smartapi-python>=1.5.0
+pyotp>=2.9.0
+logzero>=1.7.0
+websocket-client>=1.7.0
+requests>=2.31.0
+pymongo>=4.6.0
+pytz>=2024.1
+nselib>=2.5.0
