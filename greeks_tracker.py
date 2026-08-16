@@ -1,31 +1,3 @@
-"""
-NIFTY / BANKNIFTY Option Greeks Tracker (Angel One SmartAPI)
---------------------------------------------------------------
-Every 30 seconds (market hours only), fetches live option Greeks
-(Delta, Gamma, Theta, Vega, IV) for NIFTY and BANKNIFTY from Angel
-One's authenticated SmartAPI, picks the ATM strike + 2 strikes on
-either side (5 total), and saves one document per symbol per poll
-to MongoDB.
-
-Runs continuously as a cloud background worker (e.g. Render) — no
-local machine needed once deployed. Read-only market data calls are
-NOT subject to Angel One's static-IP order-execution mandate, so a
-normal (non-static) host IP is fine here.
-
-Environment variables required (set in your host's dashboard,
-never hardcode secrets in this file):
-    ANGEL_API_KEY       -> from your SmartAPI app (required)
-    ANGEL_CLIENT_CODE   -> your Angel One client/login ID (required)
-    ANGEL_PIN           -> your trading PIN (required)
-    ANGEL_TOTP_SECRET   -> the 32-char TOTP secret from enable-totp (required)
-    MONGO_URI           -> your MongoDB Atlas connection string (required)
-    MONGO_DB            -> database name (default: theta_tracker)
-    MONGO_COLLECTION    -> collection name (default: option_greeks)
-    SYMBOLS             -> comma-separated (default: NIFTY,BANKNIFTY)
-    STRIKE_RANGE         -> strikes on each side of ATM (default: 2)
-    POLL_SECONDS         -> polling interval during market hours (default: 30)
-"""
-
 import os
 import time
 import logging
@@ -135,6 +107,18 @@ def is_market_open(holidays: set) -> bool:
     return MARKET_OPEN <= now_ist.time() <= MARKET_CLOSE
 
 
+def seconds_until_market_open(holidays: set):
+    """Returns seconds until today's market open, or None if the market
+    won't open today at all (weekend/holiday) or open has already passed."""
+    now_ist = datetime.now(IST)
+    if now_ist.weekday() >= 5 or now_ist.date() in holidays:
+        return None
+    if now_ist.time() >= MARKET_OPEN:
+        return None
+    open_dt = IST.localize(datetime.combine(now_ist.date(), MARKET_OPEN))
+    return (open_dt - now_ist).total_seconds()
+
+
 # ---------- Parsing & ATM selection ----------
 def safe_float(v):
     try:
@@ -197,7 +181,8 @@ def select_atm_strikes(greek_rows: list, strike_range: int) -> list:
 # cleanly the moment the market is closed OR it's approaching that 6h cap —
 # letting the *next* scheduled trigger pick up later, rather than idling
 # uselessly inside one job.
-JOB_SAFETY_MAX_SECONDS = float(os.environ.get("JOB_SAFETY_MAX_SECONDS", str(5 * 3600 + 45 * 60)))  # 5h45m
+JOB_SAFETY_MAX_SECONDS = float(os.environ.get("JOB_SAFETY_MAX_SECONDS", str(5 * 3600 + 30 * 60)))  # 5h30m
+PRE_MARKET_GRACE_MINUTES = float(os.environ.get("PRE_MARKET_GRACE_MINUTES", "15"))
 
 
 def main():
@@ -208,12 +193,17 @@ def main():
     log.info("Connected to MongoDB db=%s collection=%s", MONGO_DB, MONGO_COLLECTION)
     log.info("Tracking symbols=%s strike_range=%s poll_seconds=%s", SYMBOLS, STRIKE_RANGE, POLL_SECONDS)
 
-    # A single job never spans midnight (max ~6h), so login/holidays/expiry
-    # are each fetched once at the start of the job — no daily-refresh logic needed.
     holidays = fetch_fo_holidays()
 
-    if not is_market_open(holidays):
-        log.info("Market is closed right now — nothing to do, exiting so the next scheduled run can pick up.")
+    # If we were triggered a bit early (e.g. deliberately, as a buffer against
+    # GitHub's scheduling delay) and market isn't open yet but opens soon,
+    # WAIT for it instead of exiting — that's the actual delay protection.
+    wait_secs = seconds_until_market_open(holidays)
+    if wait_secs is not None and wait_secs <= PRE_MARKET_GRACE_MINUTES * 60:
+        log.info("Market opens in %.0fs — waiting for it instead of exiting", wait_secs)
+        time.sleep(wait_secs + 2)
+    elif not is_market_open(holidays):
+        log.info("Market is closed and not opening soon — exiting so the next scheduled run can pick up.")
         return
 
     smart_api = angel_login()
