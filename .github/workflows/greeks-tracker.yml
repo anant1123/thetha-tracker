@@ -1,1 +1,47 @@
+name: Option Greeks Tracker
 
+# NIFTY/BANKNIFTY market hours are 9:15am-3:30pm IST (6h15m), but a single
+# GitHub Actions job is hard-capped at 6 hours. So we schedule TWO triggers:
+#   - Trigger 1 at 9:15 IST: runs the whole day, self-exits ~5h45m in (~3:00pm
+#     IST) via the script's own JOB_SAFETY_MAX_SECONDS, safely under the cap.
+#   - Trigger 2 at 2:58 IST: covers the remaining ~30min tail through close,
+#     with a small overlap for safety.
+# Cron times below are in UTC (IST = UTC + 5:30).
+on:
+  schedule:
+    - cron: '45 3 * * 1-5'   # 09:15 IST, Mon-Fri
+    - cron: '28 9 * * 1-5'   # 14:58 IST, Mon-Fri
+  workflow_dispatch: {}       # lets you manually trigger a test run from the Actions tab
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    # Explicit safety net — GitHub's own hard cap is 6h (360min) regardless,
+    # this just makes our intent visible and fails a bit earlier/cleaner.
+    timeout-minutes: 355
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tracker
+        env:
+          ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
+          ANGEL_CLIENT_CODE: ${{ secrets.ANGEL_CLIENT_CODE }}
+          ANGEL_PIN: ${{ secrets.ANGEL_PIN }}
+          ANGEL_TOTP_SECRET: ${{ secrets.ANGEL_TOTP_SECRET }}
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          MONGO_DB: theta_tracker
+          MONGO_COLLECTION: option_greeks
+          SYMBOLS: NIFTY,BANKNIFTY
+          STRIKE_RANGE: "2"
+          POLL_SECONDS: "30"
+        run: python greeks_tracker.py
