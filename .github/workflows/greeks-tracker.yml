@@ -1,24 +1,28 @@
 name: Option Greeks Tracker
 
 # NIFTY/BANKNIFTY market hours are 9:15am-3:30pm IST (6h15m), but a single
-# GitHub Actions job is hard-capped at 6 hours. So we schedule TWO triggers:
-#   - Trigger 1 at 9:15 IST: runs the whole day, self-exits ~5h45m in (~3:00pm
-#     IST) via the script's own JOB_SAFETY_MAX_SECONDS, safely under the cap.
-#   - Trigger 2 at 2:58 IST: covers the remaining ~30min tail through close,
-#     with a small overlap for safety.
+# GitHub Actions job is hard-capped at 6 hours. So we schedule TWO triggers,
+# each started a bit EARLY as a buffer against GitHub's scheduling delay —
+# the script itself waits for market open rather than exiting if triggered
+# up to 15 min early (see PRE_MARKET_GRACE_MINUTES in greeks_tracker.py):
+#   - Trigger 1 at 9:05 IST (10min buffer before 9:15 open): runs the day,
+#     self-exits ~5h30m after this start (~14:35 IST), under the 6h cap.
+#   - Trigger 2 at 14:15 IST (20min buffer before job 1's expected end):
+#     covers the remaining time through close at 15:30 IST.
 # Cron times below are in UTC (IST = UTC + 5:30).
 on:
   schedule:
-    - cron: '45 3 * * 1-5'   # 09:15 IST, Mon-Fri
-    - cron: '28 9 * * 1-5'   # 14:58 IST, Mon-Fri
+    - cron: '35 3 * * 1-5'   # 09:05 IST, Mon-Fri
+    - cron: '45 8 * * 1-5'   # 14:15 IST, Mon-Fri
   workflow_dispatch: {}       # lets you manually trigger a test run from the Actions tab
 
 jobs:
   track:
     runs-on: ubuntu-latest
-    # Explicit safety net — GitHub's own hard cap is 6h (360min) regardless,
-    # this just makes our intent visible and fails a bit earlier/cleaner.
-    timeout-minutes: 355
+    # Explicit safety net — GitHub's own hard cap is 6h (360min) regardless.
+    # Set comfortably above JOB_SAFETY_MAX_SECONDS (5h30m) in the script so
+    # the script's own clean exit fires first, this is just a backstop.
+    timeout-minutes: 345
 
     steps:
       - name: Check out repo
