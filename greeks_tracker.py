@@ -61,7 +61,6 @@ POLL_SECONDS = float(os.environ.get("POLL_SECONDS", "30"))
 IST = pytz.timezone("Asia/Kolkata")
 MARKET_OPEN = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
-CLOSED_MARKET_CHECK_SECONDS = 300
 
 # NSE is used ONLY for the free, non-sensitive expiry-date lookup and
 # holiday calendar — all financial data (theta, IV, etc.) comes from
@@ -192,58 +191,59 @@ def select_atm_strikes(greek_rows: list, strike_range: int) -> list:
 
 
 # ---------- Main loop ----------
+# GitHub Actions runs this as a short-lived JOB, not a forever-alive process:
+# each scheduled trigger starts a fresh run, and GitHub force-kills any job
+# past 6 hours. So instead of looping forever like on a VPS, this exits
+# cleanly the moment the market is closed OR it's approaching that 6h cap —
+# letting the *next* scheduled trigger pick up later, rather than idling
+# uselessly inside one job.
+JOB_SAFETY_MAX_SECONDS = float(os.environ.get("JOB_SAFETY_MAX_SECONDS", str(5 * 3600 + 45 * 60)))  # 5h45m
+
+
 def main():
+    job_start = time.time()
+
     client = MongoClient(MONGO_URI)
     collection = client[MONGO_DB][MONGO_COLLECTION]
     log.info("Connected to MongoDB db=%s collection=%s", MONGO_DB, MONGO_COLLECTION)
     log.info("Tracking symbols=%s strike_range=%s poll_seconds=%s", SYMBOLS, STRIKE_RANGE, POLL_SECONDS)
 
-    smart_api = angel_login()
-    login_date = date.today()
-
-    nse_session = new_nse_session()
+    # A single job never spans midnight (max ~6h), so login/holidays/expiry
+    # are each fetched once at the start of the job — no daily-refresh logic needed.
     holidays = fetch_fo_holidays()
-    holidays_fetched_date = date.today()
-    expiry_cache = {}  # symbol -> (date_fetched, expiry_str)
+
+    if not is_market_open(holidays):
+        log.info("Market is closed right now — nothing to do, exiting so the next scheduled run can pick up.")
+        return
+
+    smart_api = angel_login()
+    nse_session = new_nse_session()
+    expiry_cache = {}  # symbol -> expiry_str, fetched once per job
 
     consecutive_failures = 0
 
     while True:
-        today = date.today()
-
-        # Angel One session expires at midnight IST — re-login once per day
-        if today != login_date:
-            try:
-                smart_api = angel_login()
-                login_date = today
-            except Exception as e:
-                log.error("Daily re-login failed, will retry next cycle: %s", e)
-                time.sleep(30)
-                continue
-
-        if today != holidays_fetched_date:
-            holidays = fetch_fo_holidays()
-            holidays_fetched_date = today
+        if time.time() - job_start > JOB_SAFETY_MAX_SECONDS:
+            log.info("Approaching GitHub Actions' time limit — exiting cleanly so the next scheduled run continues.")
+            return
 
         if not is_market_open(holidays):
-            log.info("Market closed — sleeping %ds", CLOSED_MARKET_CHECK_SECONDS)
-            time.sleep(CLOSED_MARKET_CHECK_SECONDS)
-            continue
+            log.info("Market closed — exiting cleanly.")
+            return
 
         loop_start = time.time()
 
         for symbol in SYMBOLS:
             try:
-                cached = expiry_cache.get(symbol)
-                if cached is None or cached[0] != today:
+                if symbol not in expiry_cache:
                     try:
                         expiry = fetch_nearest_expiry_angel_format(nse_session, symbol)
                     except requests.exceptions.RequestException:
                         nse_session = new_nse_session()
                         expiry = fetch_nearest_expiry_angel_format(nse_session, symbol)
-                    expiry_cache[symbol] = (today, expiry)
+                    expiry_cache[symbol] = expiry
                 else:
-                    expiry = cached[1]
+                    expiry = expiry_cache[symbol]
 
                 resp = smart_api.optionGreek({"name": symbol, "expirydate": expiry})
 
@@ -253,7 +253,6 @@ def main():
                     if consecutive_failures >= 3:
                         log.info("Repeated failures — forcing re-login")
                         smart_api = angel_login()
-                        login_date = date.today()
                         consecutive_failures = 0
                     continue
 
