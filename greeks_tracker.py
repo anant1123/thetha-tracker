@@ -27,7 +27,8 @@ MONGO_DB = os.environ.get("MONGO_DB", "theta_tracker")
 MONGO_COLLECTION = os.environ.get("MONGO_COLLECTION", "option_greeks")
 
 SYMBOLS = [s.strip().upper() for s in os.environ.get("SYMBOLS", "NIFTY,BANKNIFTY").split(",") if s.strip()]
-STRIKE_RANGE = int(os.environ.get("STRIKE_RANGE", "2"))
+_strike_range_raw = os.environ.get("STRIKE_RANGE", "2").strip().upper()
+STRIKE_RANGE = None if _strike_range_raw == "ALL" else int(_strike_range_raw)  # None = keep the full chain
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", "30"))
 
 IST = pytz.timezone("Asia/Kolkata")
@@ -127,12 +128,13 @@ def safe_float(v):
         return None
 
 
-def select_atm_strikes(greek_rows: list, strike_range: int) -> list:
+def select_atm_strikes(greek_rows: list, strike_range) -> list:
     """
     Groups the raw optionGreek rows by strike, finds ATM as the strike
     whose CE delta is closest to 0.5 (the standard definition — no
     separate spot-price lookup or instrument-token needed), then
     returns ATM +/- strike_range strikes with both CE and PE greeks.
+    strike_range=None means keep the ENTIRE chain (no filtering).
     """
     by_strike = {}
     for row in greek_rows:
@@ -152,10 +154,13 @@ def select_atm_strikes(greek_rows: list, strike_range: int) -> list:
         return abs(delta - 0.5) if delta is not None else float("inf")
 
     atm_strike = min(strikes_sorted, key=ce_delta_distance)
-    atm_idx = strikes_sorted.index(atm_strike)
 
-    lo = max(0, atm_idx - strike_range)
-    hi = min(len(strikes_sorted), atm_idx + strike_range + 1)
+    if strike_range is None:
+        lo, hi = 0, len(strikes_sorted)  # keep everything
+    else:
+        atm_idx = strikes_sorted.index(atm_strike)
+        lo = max(0, atm_idx - strike_range)
+        hi = min(len(strikes_sorted), atm_idx + strike_range + 1)
 
     result = []
     for k in strikes_sorted[lo:hi]:
