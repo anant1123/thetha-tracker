@@ -189,8 +189,12 @@ def main():
     job_start = time.time()
 
     client = MongoClient(MONGO_URI)
-    collection = client[MONGO_DB][MONGO_COLLECTION]
-    log.info("Connected to MongoDB db=%s collection=%s", MONGO_DB, MONGO_COLLECTION)
+    db = client[MONGO_DB]
+    # Each symbol gets its own collection (e.g. option_greeks_nifty,
+    # option_greeks_banknifty) instead of one shared collection — easier
+    # to browse separately in Atlas, and queries never need a symbol filter.
+    collections = {symbol: db[f"{MONGO_COLLECTION}_{symbol.lower()}"] for symbol in SYMBOLS}
+    log.info("Connected to MongoDB db=%s collections=%s", MONGO_DB, list(collections.values()))
     log.info("Tracking symbols=%s strike_range=%s poll_seconds=%s", SYMBOLS, STRIKE_RANGE, POLL_SECONDS)
 
     holidays = fetch_fo_holidays()
@@ -257,7 +261,7 @@ def main():
                     "expiry": expiry,
                     "strikes": strikes,
                 }
-                collection.insert_one(doc)
+                collections[symbol].insert_one(doc)
 
                 atm = next((s["strike"] for s in strikes if s["is_atm"]), None)
                 atm_theta_ce = next(
