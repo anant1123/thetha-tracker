@@ -179,7 +179,7 @@ def select_atm_strikes(greek_rows: list, strike_range) -> list:
     return result
 
 JOB_SAFETY_MAX_SECONDS = float(os.environ.get("JOB_SAFETY_MAX_SECONDS", str(5 * 3600 + 30 * 60)))  # 5h30m
-PRE_MARKET_GRACE_MINUTES = float(os.environ.get("PRE_MARKET_GRACE_MINUTES", "15"))
+PRE_MARKET_GRACE_MINUTES = float(os.environ.get("PRE_MARKET_GRACE_MINUTES", "35"))
 
 
 def main():
