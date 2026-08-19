@@ -187,7 +187,6 @@ def main():
 
     client = MongoClient(MONGO_URI)
     db = client[MONGO_DB]
-  .
     collections = {symbol: db[f"{MONGO_COLLECTION}_{symbol.lower()}"] for symbol in SYMBOLS}
     log.info("Connected to MongoDB db=%s collections=%s", MONGO_DB, list(collections.values()))
     log.info("Tracking symbols=%s strike_range=%s poll_seconds=%s", SYMBOLS, STRIKE_RANGE, POLL_SECONDS)
