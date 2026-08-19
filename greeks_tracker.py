@@ -178,14 +178,6 @@ def select_atm_strikes(greek_rows: list, strike_range) -> list:
         result.append(entry)
     return result
 
-
-# ---------- Main loop ----------
-# GitHub Actions runs this as a short-lived JOB, not a forever-alive process:
-# each scheduled trigger starts a fresh run, and GitHub force-kills any job
-# past 6 hours. So instead of looping forever like on a VPS, this exits
-# cleanly the moment the market is closed OR it's approaching that 6h cap —
-# letting the *next* scheduled trigger pick up later, rather than idling
-# uselessly inside one job.
 JOB_SAFETY_MAX_SECONDS = float(os.environ.get("JOB_SAFETY_MAX_SECONDS", str(5 * 3600 + 30 * 60)))  # 5h30m
 PRE_MARKET_GRACE_MINUTES = float(os.environ.get("PRE_MARKET_GRACE_MINUTES", "15"))
 
@@ -195,18 +187,13 @@ def main():
 
     client = MongoClient(MONGO_URI)
     db = client[MONGO_DB]
-    # Each symbol gets its own collection (e.g. option_greeks_nifty,
-    # option_greeks_banknifty) instead of one shared collection — easier
-    # to browse separately in Atlas, and queries never need a symbol filter.
+  .
     collections = {symbol: db[f"{MONGO_COLLECTION}_{symbol.lower()}"] for symbol in SYMBOLS}
     log.info("Connected to MongoDB db=%s collections=%s", MONGO_DB, list(collections.values()))
     log.info("Tracking symbols=%s strike_range=%s poll_seconds=%s", SYMBOLS, STRIKE_RANGE, POLL_SECONDS)
 
     holidays = fetch_fo_holidays()
 
-    # If we were triggered a bit early (e.g. deliberately, as a buffer against
-    # GitHub's scheduling delay) and market isn't open yet but opens soon,
-    # WAIT for it instead of exiting — that's the actual delay protection.
     wait_secs = seconds_until_market_open(holidays)
     if wait_secs is not None and wait_secs <= PRE_MARKET_GRACE_MINUTES * 60:
         log.info("Market opens in %.0fs — waiting for it instead of exiting", wait_secs)
@@ -282,8 +269,6 @@ def main():
                 log.exception("Error processing %s: %s", symbol, e)
                 consecutive_failures += 1
 
-            # small gap between symbols within the same cycle — stays well
-            # under Angel One's rate limits even with multiple symbols
             time.sleep(1)
 
         elapsed = time.time() - loop_start
