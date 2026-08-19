@@ -46,6 +46,6 @@ jobs:
           MONGO_DB: theta_tracker
           MONGO_COLLECTION: option_greeks
           SYMBOLS: NIFTY,BANKNIFTY
-          STRIKE_RANGE: "2"
+          STRIKE_RANGE: "5"
           POLL_SECONDS: "30"
         run: python greeks_tracker.py
