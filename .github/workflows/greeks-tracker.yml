@@ -1,28 +1,91 @@
+# name: Option Greeks Tracker
+
+# # NIFTY/BANKNIFTY market hours are 9:15am-3:30pm IST (6h15m), but a single
+# # GitHub Actions job is hard-capped at 6 hours. So we schedule TWO triggers,
+# # each started a bit EARLY as a buffer against GitHub's scheduling delay —
+# # the script itself waits for market open rather than exiting if triggered
+# # up to 15 min early (see PRE_MARKET_GRACE_MINUTES in greeks_tracker.py):
+# #   - Trigger 1 at 9:05 IST (10min buffer before 9:15 open): runs the day,
+# #     self-exits ~5h30m after this start (~14:35 IST), under the 6h cap.
+# #   - Trigger 2 at 14:15 IST (20min buffer before job 1's expected end):
+# #     covers the remaining time through close at 15:30 IST.
+# # Cron times below are in UTC (IST = UTC + 5:30).
+# on:
+#   schedule:
+#     - cron: '17 3 * * 1-5'   # 08:47 IST, Mon-Fri
+#     - cron: '20 8 * * 1-5'   # 13:50 IST, Mon-Fri   # 14:15 IST, Mon-Fri
+#   workflow_dispatch: {}       # lets you manually trigger a test run from the Actions tab
+
+# jobs:
+#   track:
+#     runs-on: ubuntu-latest
+#     # Explicit safety net — GitHub's own hard cap is 6h (360min) regardless.
+#     # Set comfortably above JOB_SAFETY_MAX_SECONDS (5h30m) in the script so
+#     # the script's own clean exit fires first, this is just a backstop.
+#     timeout-minutes: 345
+
+#     steps:
+#       - name: Check out repo
+#         uses: actions/checkout@v4
+
+#       - name: Set up Python
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: '3.12'
+
+#       - name: Install dependencies
+#         run: pip install -r requirements.txt
+
+#       - name: Run tracker
+#         env:
+#           ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
+#           ANGEL_CLIENT_CODE: ${{ secrets.ANGEL_CLIENT_CODE }}
+#           ANGEL_PIN: ${{ secrets.ANGEL_PIN }}
+#           ANGEL_TOTP_SECRET: ${{ secrets.ANGEL_TOTP_SECRET }}
+#           MONGO_URI: ${{ secrets.MONGO_URI }}
+#           MONGO_DB: theta_tracker
+#           MONGO_COLLECTION: option_greeks
+#           SYMBOLS: NIFTY,BANKNIFTY
+#           STRIKE_RANGE: "5"
+#           POLL_SECONDS: "30"
+#         run: python greeks_tracker.py
 name: Option Greeks Tracker
 
 # NIFTY/BANKNIFTY market hours are 9:15am-3:30pm IST (6h15m), but a single
 # GitHub Actions job is hard-capped at 6 hours. So we schedule TWO triggers,
-# each started a bit EARLY as a buffer against GitHub's scheduling delay —
+# each started a bit EARLY as a buffer against GitHub's scheduling delay --
 # the script itself waits for market open rather than exiting if triggered
-# up to 15 min early (see PRE_MARKET_GRACE_MINUTES in greeks_tracker.py):
-#   - Trigger 1 at 9:05 IST (10min buffer before 9:15 open): runs the day,
-#     self-exits ~5h30m after this start (~14:35 IST), under the 6h cap.
-#   - Trigger 2 at 14:15 IST (20min buffer before job 1's expected end):
+# up to 35 min early (see PRE_MARKET_GRACE_MINUTES in greeks_tracker.py):
+#   - Trigger 1 at 08:47 IST (~28min buffer before 9:15 open): runs the day,
+#     self-exits ~5h after this start (~13:47 IST), comfortably under the
+#     6h GitHub cap.
+#   - Trigger 2 at 13:50 IST (~3min buffer after job 1's expected end):
 #     covers the remaining time through close at 15:30 IST.
 # Cron times below are in UTC (IST = UTC + 5:30).
+#
+# `concurrency` below queues (rather than double-runs) a second trigger if
+# the first one is somehow still going -- Angel One only allows a single
+# active session per client code, so two overlapping runs logging in at
+# the same time can silently kill each other's session. This previously
+# caused most of a trading day's data to go missing without any error
+# being visible anywhere.
 on:
   schedule:
     - cron: '17 3 * * 1-5'   # 08:47 IST, Mon-Fri
-    - cron: '20 8 * * 1-5'   # 13:50 IST, Mon-Fri   # 14:15 IST, Mon-Fri
+    - cron: '20 8 * * 1-5'   # 13:50 IST, Mon-Fri
   workflow_dispatch: {}       # lets you manually trigger a test run from the Actions tab
+
+concurrency:
+  group: option-greeks-tracker
+  cancel-in-progress: false   # queue the second trigger instead of running both at once
 
 jobs:
   track:
     runs-on: ubuntu-latest
-    # Explicit safety net — GitHub's own hard cap is 6h (360min) regardless.
-    # Set comfortably above JOB_SAFETY_MAX_SECONDS (5h30m) in the script so
-    # the script's own clean exit fires first, this is just a backstop.
-    timeout-minutes: 345
+    # Explicit safety net -- GitHub's own hard cap is 6h (360min) regardless.
+    # Set comfortably above JOB_SAFETY_MAX_SECONDS (5h, see script) so the
+    # script's own clean exit fires first; this is just a backstop.
+    timeout-minutes: 315
 
     steps:
       - name: Check out repo
